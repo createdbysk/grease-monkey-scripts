@@ -6,6 +6,22 @@
 // @grant       GM_addStyle
 // ==/UserScript==
 
+function addGlobalStyle(css) {
+  var head, style;
+  head = document.getElementsByTagName('head')[0];
+  if (!head) { return; }
+  style = document.createElement('style');
+  style.type = 'text/css';
+  style.innerHTML = css;
+  head.appendChild(style);
+}
+
+// Make the swimlane header gold when the WIP
+// matches the limit.
+// Make the swimlane header red when the WIP 
+// exceeds the limit.
+addGlobalStyle('.ghx-swimlane-header.wip-over-limit { background-color: red ! important; }');
+addGlobalStyle('.ghx-swimlane-header.wip-at-limit { background-color: gold ! important; }');
 
 var state = {
   columns: [
@@ -48,6 +64,10 @@ function getColumnDataId(node) {
   return node[0].attributes["data-id"].value;
 }
 
+function getIssueColumnDataId(node) {
+  return node.parent().parent().parent().parent()[0].attributes["data-column-id"].value;
+}
+
 function findColumnsForSwimlaneWIPLimits(node, columnName) {
   column = state.swimlane.includedColumns[columnName];
   if (column !== undefined) {
@@ -64,8 +84,56 @@ function getSwimlaneTitleAndWIPLimit(node) {
 }
 
 function getIssueSwimlaneTitle(node) {
-  swimlaneTitle = node.parent().parent().parent().children()[0].children[0].children[1].innerText;
+  swimlaneTitle = node.parent().parent().parent().parent().parent().parent().children()[0].children[0].children[1].innerText;
   return swimlaneTitle;
+}
+
+function initializeIssueCount(swimlaneTitle) {
+  if (!('issueCount' in state.swimlane.data[swimlaneTitle])) {
+    state.swimlane.data[swimlaneTitle]['issueCount'] = 0;
+  }
+}
+
+function incrementCountTowardsWipLimit(swimlaneTitle, node) {
+  initializeIssueCount(swimlaneTitle);
+  id = getIssueColumnDataId(node);
+  if (id in state.swimlane.includedColumnsById) {
+    state.swimlane.data[swimlaneTitle]['issueCount']++;
+  }
+}
+
+function getSwimlaneHeading(node) {
+  return node.parent().parent().parent().parent().parent().parent().children()[0];
+}
+
+function markSwimlaneHeadingOverlimit(node) {
+  markSwimlaneHeadingNormal(node);
+  getSwimlaneHeading(node).className += " wip-over-limit";
+}
+
+function markSwimlaneHeadingAtlimit(node) {
+  markSwimlaneHeadingNormal(node);
+  getSwimlaneHeading(node).className += " wip-at-limit";
+}
+
+function markSwimlaneHeadingNormal(node) {
+  getSwimlaneHeading(node).className = getSwimlaneHeading(node).className.replace(" wip-at-limit", "").replace(" wip-over-limit", "");
+}
+
+function checkSwimlaneWipLimit(swimlaneTitle, node) {
+  swimlaneData = state.swimlane.data[swimlaneTitle];
+  if ('wipLimit' in swimlaneData) {
+    initializeIssueCount(swimlaneTitle);
+    if (swimlaneData['issueCount'] > swimlaneData['wipLimit']) {
+      markSwimlaneHeadingOverlimit(node);
+    }
+    else if (swimlaneData['issueCount'] == swimlaneData['wipLimit']) {
+      markSwimlaneHeadingAtlimit(node);
+    }
+    else {
+      markSwimlaneHeadingNormal(node);
+    }
+  }
 }
 
 function updateMultiColumnWIPLimits(node, columnName) {
@@ -132,15 +200,21 @@ waitForKeyElements(".ghx-column", function(node) {
     findColumnsForSwimlaneWIPLimits(node, columnName);
 });
 
-
 waitForKeyElements(".ghx-heading", function(node) {
   swimlaneTitleAndWIPLimit = getSwimlaneTitleAndWIPLimit(node);
   swimlaneTitle = swimlaneTitleAndWIPLimit[0];
   wipLimit = swimlaneTitleAndWIPLimit[1];
-  state.swimlane.data[swimlaneTitle] = {wipLimit: wipLimit, issueCount: 0};
+  state.swimlane.data[swimlaneTitle] = {
+    node: node,
+    wipLimit: wipLimit
+  };
+  initializeIssueCount(swimlaneTitle);
+  checkSwimlaneWipLimit(swimlaneTitle, node);
 });
 
 
-waitForKeyElements(".ghx-issue", function(node) {
+waitForKeyElements(".ghx-key", function(node) {
   swimlaneTitle = getIssueSwimlaneTitle(node);
+  incrementCountTowardsWipLimit(swimlaneTitle, node);
+  checkSwimlaneWipLimit(swimlaneTitle, node);
 });
